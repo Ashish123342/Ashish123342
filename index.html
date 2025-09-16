@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FollowChat — Google Sign-In (Realtime DB)</title>
+<style>
+  :root{
+    --primary:#2563eb; --bg:#f6f8fb; --card:#fff; --muted:#6b7280;
+    --radius:12px; --shadow:0 8px 24px rgba(37,99,235,0.06);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#111827;-webkit-font-smoothing:antialiased}
+  #app{max-width:1100px;margin:20px auto;padding:16px;display:flex;gap:16px}
+  .panel{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;flex:1;min-height:640px}
+  .left{flex:0.95;min-width:320px}.right{flex:1.6}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  h2{margin:0;color:var(--primary)}
+  .small{font-size:13px;color:var(--muted)}
+  input,textarea,select,button{font-family:inherit}
+  input,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #e6e9ef;margin:8px 0;background:#fbfdff}
+  button{background:linear-gradient(90deg,var(--primary),#1d4ed8);border:none;color:#fff;padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:700}
+  button.ghost{background:#eef2ff;color:var(--primary);box-shadow:none}
+  .hidden{display:none!important}
+  .row{display:flex;gap:10px;align-items:center}
+  .contacts-list{max-height:320px;overflow:auto;margin-top:8px}
+  .person{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:10px;border:1px solid #eef2ff;margin-bottom:8px;background:#fbfdff}
+  .msg{max-width:78%;padding:10px;border-radius:12px;margin:8px 0;position:relative}
+  .me{margin-left:auto;background:#dff6ea}.them{margin-right:auto;background:#fff}
+  .compose{display:flex;gap:10px;align-items:center;margin-top:10px}
+  .avatar{width:56px;height:56px;border-radius:10px;object-fit:cover;background:#f3f4f6}
+  .post{border-radius:10px;border:1px solid #eef2ff;background:#fff;padding:10px;margin-bottom:12px}
+  footer.small{margin-top:12px;color:#9ca3af}
+  .muted{color:var(--muted)}
+  .tab{padding:8px 10px;border-radius:10px;border:1px solid #eef2ff;background:#fff;cursor:pointer}
+  .tab.active{background:linear-gradient(90deg,var(--primary),#4f46e5);color:#fff}
+</style>
+</head>
+<body>
+  <div id="app">
+    <!-- LEFT: Auth / Profile / People -->
+    <div class="panel left">
+      <header>
+        <h2>FollowChat</h2>
+        <div>
+          <span id="user-display" class="small"></span>
+          <button id="btn-logout" class="hidden" onclick="logout()">Logout</button>
+        </div>
+      </header>
+
+      <!-- AUTH -->
+      <div id="auth-view">
+        <h3>Sign in with Google</h3>
+        <div class="small">Click to open Google sign-in popup. Email will not be stored.</div>
+        <div style="margin-top:12px">
+          <button id="btn-google" onclick="signInWithGoogle()">Sign in with Google</button>
+        </div>
+        <div id="auth-error" class="small" style="color:#c71c1c;margin-top:8px"></div>
+        <hr>
+        <div class="small">After sign-in your profile will be auto-created (displayName & photoURL). You can edit later.</div>
+      </div>
+
+      <!-- PROFILE SETUP / EDIT -->
+      <div id="profile-setup" class="hidden" style="margin-top:12px">
+        <h3>Profile</h3>
+        <div class="small">Edit display name, emoji or upload a photo</div>
+        <input id="profile-name" placeholder="Display name">
+        <input id="profile-emoji" placeholder="Emoji (🚀)">
+        <div class="row">
+          <label class="ghost" style="padding:8px;cursor:pointer">
+            <input id="profile-photo" type="file" accept="image/*" style="display:none" onchange="previewPhoto(event)">
+            Upload Photo
+          </label>
+          <div id="photo-preview" class="small">No photo</div>
+        </div>
+        <div class="row">
+          <button onclick="saveProfile()">Save</button>
+          <button class="ghost" onclick="cancelEditProfile()">Cancel</button>
+        </div>
+        <div id="profile-error" class="small" style="color:#c71c1c"></div>
+      </div>
+
+      <!-- PEOPLE / FOLLOWING / FOLLOWERS -->
+      <div id="people-view" class="hidden" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>People</strong>
+          <div>
+            <button id="tab-people" class="tab active" onclick="openTab('people')">All</button>
+            <button id="tab-following" class="tab" onclick="openTab('following')">Following</button>
+            <button id="tab-followers" class="tab" onclick="openTab('followers')">Followers</button>
+          </div>
+        </div>
+
+        <div style="margin-top:8px">
+          <input id="search-users" placeholder="Search users..." oninput="renderPeople(currentTab)">
+        </div>
+
+        <div id="people-list" class="contacts-list"></div>
+
+        <hr>
+        <div id="me-card" style="margin-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:10px;border:1px solid #eef2ff;background:#fff">
+            <div>
+              <div id="me-emoji" style="font-size:22px"></div>
+              <div><strong id="me-name"></strong></div>
+              <div class="small" id="me-desc"></div>
+              <div class="small">Following: <span id="count-following">0</span> • Followers: <span id="count-followers">0</span></div>
+            </div>
+            <div>
+              <img id="me-photo" src="" alt="" class="avatar" style="display:none">
+            </div>
+          </div>
+          <div style="margin-top:8px"><button class="ghost" onclick="openEditProfile()">Edit Profile</button></div>
+        </div>
+      </div>
+
+      <footer class="small">Realtime DB • Replace firebaseConfig • Enable Google provider</footer>
+    </div>
+
+    <!-- RIGHT: Feed & Chat -->
+    <div class="panel right">
+      <div id="main-controls" class="hidden" style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <strong id="app-title">Feed</strong>
+          <div class="small" id="sub-title">Realtime posts • follow • chat</div>
+        </div>
+        <div>
+          <button onclick="toggleNewPost()" class="ghost">New Post</button>
+          <button onclick="openChatPanel()" class="ghost">Chat</button>
+        </div>
+      </div>
+
+      <!-- New post -->
+      <div id="new-post" class="hidden" style="margin-top:12px">
+        <h4>Create Post</h4>
+        <textarea id="post-caption" placeholder="Write a caption..." rows="2"></textarea>
+        <div class="row">
+          <label class="ghost" style="cursor:pointer;padding:8px"><input id="post-image" type="file" accept="image/*" style="display:none" onchange="previewPostImage(event)"> Upload Image</label>
+          <div id="post-photo-preview" class="small">No image</div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button onclick="createPost()">Post</button>
+          <button class="ghost" onclick="toggleNewPost()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Feed -->
+      <div id="feed" style="margin-top:12px"></div>
+
+      <!-- Chat -->
+      <div id="chat-panel" class="hidden" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong id="chat-title">Chat</strong>
+          <div><button class="ghost" onclick="closeChatPanel()">Close</button></div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <div style="flex:0.6">
+            <input id="chat-search" placeholder="Search friends..." oninput="renderChatList()">
+            <div id="chat-list" class="contacts-list" style="max-height:260px;margin-top:8px"></div>
+          </div>
+          <div style="flex:1.4;display:flex;flex-direction:column;gap:8px">
+            <div id="chat-with" class="small">No chat selected</div>
+            <div id="messages" style="height:320px;overflow:auto;padding:10px;border-radius:10px;border:1px solid #e6e9ef;background:linear-gradient(180deg,#fbfdff,#f7f9fc)"></div>
+            <div class="compose">
+              <input id="msg-text" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendMessage()">
+              <label class="ghost" style="cursor:pointer;padding:8px"><input id="attach-img" type="file" accept="image/*" style="display:none" onchange="sendImage(event)">Image</label>
+              <button onclick="sendMessage()">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="system-log" class="small muted" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- Firebase + App JS -->
+  <script type="module">
+  // -------------------------
+  // FIREBASE IMPORTS
+  // -------------------------
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import {
+    getDatabase, ref, set, push, onValue, onChildAdded, get, child, update
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import { getStorage, ref as sref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+  // -------------------------
+  // CONFIG - replace with your Firebase project values
+  // -------------------------
+  const firebaseConfig = {
+  apiKey: "AIzaSyDTjjxt12p-0CMeey4EjKqiWAz9trGB0kQ",
+  authDomain: "tsedio-a122c.firebaseapp.com",
+  databaseURL: "https://tsedio-a122c-default-rtdb.firebaseio.com",
+  projectId: "tsedio-a122c",
+  storageBucket: "tsedio-a122c.firebasestorage.app",
+  messagingSenderId: "44533653921",
+  appId: "1:44533653921:web:07676dce93af9690136be0",
+  measurementId: "G-ZFZG6MBV1X"
+};
+  // -------------------------
+  // INIT
+  // -------------------------
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getDatabase(app);
+  const storage = getStorage(app);
+  const googleProvider = new GoogleAuthProvider();
+
+  // -------------------------
+  // GLOBALS
+  // -------------------------
+  let currentUser = null;
+  let myProfile = null;
+  let cachedProfiles = {};
+  let currentTab = 'people';
+  let activeChat = null;
+  let postImageFile = null;
+  let profileImageFile = null;
+
+  const $ = id => document.getElementById(id);
+  function log(msg){ $('system-log').innerText = new Date().toLocaleTimeString() + " — " + msg + "\n" + $('system-log').innerText; }
+
+  // -------------------------
+  // SIGN IN WITH GOOGLE (works on click)
+  // -------------------------
+  window.signInWithGoogle = async () => {
+    try{
+      const res = await signInWithPopup(auth, googleProvider);
+      currentUser = res.user;
+      log('Signed in: ' + (currentUser.displayName || currentUser.uid));
+      // profile creation handled in onAuthStateChanged below
+    }catch(e){
+      console.error(e);
+      $('auth-error').innerText = e.message || e;
+    }
+  };
+
+  // -------------------------
+  // AUTH STATE -> auto-create profile if not exists
+  // -------------------------
+  onAuthStateChanged(auth, async user => {
+    if(user){
+      currentUser = user;
+      $('user-display').innerText = user.displayName || user.uid;
+      $('btn-logout').classList.remove('hidden');
+      $('auth-view').classList.add('hidden');
+
+      // check profile in Realtime DB
+      const snap = await get(child(ref(db), `profiles/${currentUser.uid}`));
+      if(!snap.exists()){
+        // auto-create profile from Google info (DO NOT store email)
+        const newProfile = {
+          uid: currentUser.uid,
+          name: currentUser.displayName || ('User_' + currentUser.uid.slice(0,6)),
+          emoji: "🙂",
+          phone: "",
+          photoURL: currentUser.photoURL || "",
+          followers: {},
+          following: {}
+        };
+        await set(ref(db, `profiles/${currentUser.uid}`), newProfile);
+        myProfile = newProfile;
+        log('Profile auto-created for ' + newProfile.name);
+        // show edit UI so user can tweak if desired
+        $('profile-setup').classList.remove('hidden');
+        $('profile-name').value = myProfile.name;
+        $('profile-emoji').value = myProfile.emoji;
+        if(myProfile.photoURL){ $('photo-preview').innerText = 'Using Google photo (Save to persist)'; $('photo-preview').dataset.file = myProfile.photoURL; }
+      } else {
+        myProfile = snap.val();
+        initMainUI();
+      }
+    } else {
+      // signed out
+      currentUser = null;
+      myProfile = null;
+      cachedProfiles = {};
+      $('user-display').innerText = '';
+      $('btn-logout').classList.add('hidden');
+      $('auth-view').classList.remove('hidden');
+      $('people-view').classList.add('hidden');
+      $('main-controls').classList.add('hidden');
+      $('feed').innerHTML = '';
+    }
+  });
+
+  window.logout = async () => {
+    await signOut(auth);
+    location.reload();
+  };
+
+  // -------------------------
+  // PROFILE EDIT
+  // -------------------------
+  window.previewPhoto = (ev) => {
+    const f = ev.target.files[0];
+    if(!f) return;
+    profileImageFile = f;
+    $('photo-preview').innerText = f.name;
+    $('photo-preview').dataset.file = URL.createObjectURL(f);
+  };
+
+  window.openEditProfile = () => {
+    if(!myProfile) return;
+    $('profile-setup').classList.remove('hidden');
+    $('profile-name').value = myProfile.name || '';
+    $('profile-emoji').value = myProfile.emoji || '🙂';
+    $('photo-preview').innerText = myProfile.photoURL ? 'Current photo' : 'No photo';
+    $('photo-preview').dataset.file = myProfile.photoURL || '';
+  };
+
+  window.cancelEditProfile = () => {
+    profileImageFile = null;
+    $('profile-setup').classList.add('hidden');
+    $('profile-error').innerText = '';
+  };
+
+  window.saveProfile = async () => {
+    if(!currentUser) return;
+    const name = $('profile-name').value.trim();
+    const emoji = $('profile-emoji').value.trim() || '🙂';
+    if(!name){ $('profile-error').innerText = 'Enter name'; return; }
+    $('profile-error').innerText = '';
+
+    const p = { uid: currentUser.uid, name, emoji, phone: "", followers: myProfile?.followers||{}, following: myProfile?.following||{}, photoURL: myProfile?.photoURL||"" };
+
+    // if user uploaded a new photo, upload to storage
+    if(profileImageFile){
+      try{
+        const st = sref(storage, `profile_photos/${currentUser.uid}/${Date.now()}_${profileImageFile.name}`);
+        const res = await uploadBytes(st, profileImageFile);
+        const url = await getDownloadURL(res.ref);
+        p.photoURL = url;
+      }catch(e){ console.error(e); }
+    } else if($('photo-preview').dataset.file){
+      p.photoURL = $('photo-preview').dataset.file;
+    }
+
+    await set(ref(db, `profiles/${currentUser.uid}`), p);
+    myProfile = p;
+    $('profile-setup').classList.add('hidden');
+    initMainUI();
+    log('Profile saved');
+  };
+
+  // -------------------------
+  // UI INIT AFTER PROFILE EXISTS
+  // -------------------------
+  function initMainUI(){
+    $('profile-setup').classList.add('hidden');
+    $('people-view').classList.remove('hidden');
+    $('main-controls').classList.remove('hidden');
+    $('user-display').innerText = myProfile.name + " • " + (currentUser.displayName || "");
+    updateMyCard();
+    attachPeopleListener();
+    attachMyProfileListener();
+    loadFeed();
+    log('Initialized main UI for ' + myProfile.name);
+  }
+
+  function updateMyCard(){
+    $('me-emoji').innerText = myProfile.emoji || "🙂";
+    $('me-name').innerText = myProfile.name || currentUser.displayName || currentUser.uid;
+    $('me-desc').innerText = '';
+    $('count-following').innerText = Object.keys(myProfile.following || {}).length;
+    $('count-followers').innerText = Object.keys(myProfile.followers || {}).length;
+    if(myProfile.photoURL){ $('me-photo').src = myProfile.photoURL; $('me-photo').style.display='block'; } else { $('me-photo').style.display='none'; }
+  }
+
+  // -------------------------
+  // PEOPLE / FOLLOW LOGIC
+  // -------------------------
+  function openTab(tab){
+    currentTab = tab;
+    ['tab-people','tab-following','tab-followers'].forEach(id=>$(id).classList.remove('active'));
+    $(`tab-${tab}`).classList.add('active');
+    renderPeople(tab);
+  }
+  let cachedProfilesLocal = {};
+  function attachPeopleListener(){
+    const allRef = ref(db, 'profiles');
+    onValue(allRef, snap=>{
+      cachedProfiles = {};
+      snap.forEach(ch => { cachedProfiles[ch.key] = ch.val(); cachedProfilesLocal[ch.key] = ch.val(); });
+      renderPeople('people');
+      renderChatList();
+    });
+  }
+  function attachMyProfileListener(){
+    const myRef = ref(db, `profiles/${currentUser.uid}`);
+    onValue(myRef, snap=>{
+      if(snap.exists()){ myProfile = snap.val(); updateMyCard(); }
+    });
+  }
+
+  function renderPeople(view){
+    const container = $('people-list'); container.innerHTML = '';
+    const q = $('search-users').value.trim().toLowerCase();
+    Object.values(cachedProfiles).sort((a,b)=> (a.name||'').localeCompare(b.name||'')).forEach(p=>{
+      if(p.uid===currentUser.uid) return;
+      if(view==='following' && !(myProfile.following && myProfile.following[p.uid])) return;
+      if(view==='followers' && !(myProfile.followers && myProfile.followers[p.uid])) return;
+      if(q && !((p.name||'').toLowerCase().includes(q))) return;
+
+      const el = document.createElement('div'); el.className='person';
+      const left = document.createElement('div'); left.className='meta';
+      left.innerHTML = `<strong>${p.emoji||'🙂'} ${p.name}</strong><div class="small">${p.phone||''}</div>`;
+      const right = document.createElement('div');
+      const amFollowing = myProfile.following && myProfile.following[p.uid];
+      const theyFollowingMe = myProfile.followers && myProfile.followers[p.uid];
+      const followBtn = document.createElement('button'); followBtn.className='ghost';
+      followBtn.innerText = amFollowing ? 'Unfollow' : 'Follow';
+      followBtn.onclick = (ev)=>{ ev.stopPropagation(); toggleFollow(p.uid); };
+      right.appendChild(followBtn);
+
+      const msgBtn = document.createElement('button');
+      msgBtn.innerText = (amFollowing && theyFollowingMe) ? 'Message' : 'Follow to Message';
+      msgBtn.className = (amFollowing && theyFollowingMe) ? '' : 'ghost';
+      msgBtn.disabled = !(amFollowing && theyFollowingMe);
+      msgBtn.onclick = (ev)=>{ ev.stopPropagation(); if(!msgBtn.disabled) openChatWith(p.uid); };
+      right.appendChild(msgBtn);
+
+      el.appendChild(left); el.appendChild(right);
+      el.onclick = ()=> openProfilePreview(p.uid);
+      container.appendChild(el);
+    });
+  }
+
+  async function toggleFollow(targetUid){
+    if(!cachedProfiles[targetUid]) return;
+    const amFollowing = myProfile.following && myProfile.following[targetUid];
+    const updates = {};
+    if(amFollowing){
+      updates[`profiles/${currentUser.uid}/following/${targetUid}`] = null;
+      updates[`profiles/${targetUid}/followers/${currentUser.uid}`] = null;
+    } else {
+      updates[`profiles/${currentUser.uid}/following/${targetUid}`] = true;
+      updates[`profiles/${targetUid}/followers/${currentUser.uid}`] = true;
+    }
+    await update(ref(db), updates);
+    log((amFollowing? 'Unfollowed ':'Followed ') + targetUid);
+  }
+
+  function openProfilePreview(uid){
+    const p = cachedProfiles[uid];
+    if(!p) return;
+    const amFollowing = myProfile.following && myProfile.following[uid];
+    const theyFollowingMe = myProfile.followers && myProfile.followers[uid];
+    if(amFollowing && theyFollowingMe) openChatWith(uid);
+    else alert(`${p.name}\n${p.phone?('Phone: '+p.phone):''}\n${amFollowing? 'You follow':''} ${theyFollowingMe? 'Follows you':''}`);
+  }
+
+  // -------------------------
+  // POSTS: create, realtime load, like, comment
+  // -------------------------
+  window.previewPostImage = (ev) => {
+    const f = ev.target.files[0];
+    if(!f) return;
+    postImageFile = f;
+    $('post-photo-preview').innerText = f.name;
+  };
+
+  window.toggleNewPost = () => {
+    $('new-post').classList.toggle('hidden'); $('post-caption').value=''; postImageFile=null; $('post-photo-preview').innerText='No image';
+  };
+
+  async function createPost(){
+    const caption = $('post-caption').value.trim();
+    if(!postImageFile){ alert('Pick an image'); return; }
+    const id = push(ref(db, `posts`)).key;
+    const st = sref(storage, `posts/${id}_${postImageFile.name}`);
+    try{
+      const res = await uploadBytes(st, postImageFile);
+      const url = await getDownloadURL(res.ref);
+      const payload = { id, author: currentUser.uid, caption, image: url, ts: Date.now(), likes: {}, comments: {} };
+      await set(ref(db, `posts/${id}`), payload);
+      log('Posted ' + id);
+      toggleNewPost();
+    }catch(e){ console.error(e); alert('Upload failed'); }
+  }
+
+  function loadFeed(){
+    const postsRef = ref(db, 'posts');
+    onValue(postsRef, snap=>{
+      const arr = [];
+      snap.forEach(ch => arr.push(ch.val()));
+      arr.sort((a,b)=> (b.ts||0) - (a.ts||0));
+      renderFeed(arr);
+    });
+  }
+
+  function renderFeed(posts){
+    const container = $('feed'); container.innerHTML = '';
+    posts.forEach(p=>{
+      const postEl = document.createElement('div'); postEl.className='post';
+      const author = cachedProfiles[p.author] || {name:'Unknown', emoji:'🙂', photoURL:''};
+      const likedByMe = p.likes && p.likes[currentUser.uid];
+      postEl.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="width:44px;height:44px;border-radius:10px;overflow:hidden;background:#f3f4f6">
+              ${author.photoURL ? `<img src="${author.photoURL}" style="width:44px;height:44px;object-fit:cover">` : `<div style="width:44px;height:44px;display:flex;align-items:center;justify-content:center">${author.emoji||'🙂'}</div>`}
+            </div>
+            <div>
+              <div style="font-weight:700">${author.name}</div>
+              <div class="small muted">${new Date(p.ts).toLocaleString()}</div>
+            </div>
+          </div>
+          <div>${p.author===currentUser.uid? `<button class="ghost" onclick="deletePost('${p.id}')">Delete</button>` : ''}</div>
+        </div>
+        <div style="margin-top:8px">${p.caption||''}</div>
+        ${p.image? `<img src="${p.image}" style="max-width:100%;border-radius:8px;margin-top:8px">` : ''}
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button onclick="toggleLike('${p.id}')" class="${likedByMe? '':'ghost'}">${likedByMe? 'Unlike':'Like'}</button>
+          <div class="small">${Object.keys(p.likes||{}).length} likes</div>
+          <button class="ghost" onclick="openComments('${p.id}')">Comments (${Object.keys(p.comments||{}).length})</button>
+        </div>
+      `;
+      container.appendChild(postEl);
+    });
+  }
+
+  async function toggleLike(postId){
+    const likeRef = ref(db, `posts/${postId}/likes/${currentUser.uid}`);
+    const s = await get(likeRef);
+    if(s.exists()) await set(likeRef, null); else await set(likeRef, true);
+  }
+
+  async function openComments(postId){
+    const text = prompt('Add a comment:');
+    if(!text) return;
+    const cRef = push(ref(db, `posts/${postId}/comments`));
+    await set(cRef, { uid: currentUser.uid, text, ts: Date.now() });
+  }
+
+  async function deletePost(postId){
+    if(!confirm('Delete post?')) return;
+    await set(ref(db, `posts/${postId}`), null);
+  }
+
+  // -------------------------
+  // CHAT: mutual follows only (realtime)
+  // -------------------------
+  function renderChatList(){
+    const q = $('chat-search') ? $('chat-search').value.trim().toLowerCase() : '';
+    const container = $('chat-list'); if(!container) return; container.innerHTML = '';
+    const friends = Object.keys(myProfile.following||{}).filter(uid => myProfile.followers && myProfile.followers[uid]);
+    friends.forEach(uid=>{
+      const p = cachedProfiles[uid]; if(!p) return;
+      if(q && !p.name.toLowerCase().includes(q)) return;
+      const el = document.createElement('div'); el.className='person'; el.innerHTML = `<div><strong>${p.emoji||'🙂'} ${p.name}</strong><div class="small">${p.phone||''}</div></div>`;
+      el.onclick = () => openChatWith(uid);
+      container.appendChild(el);
+    });
+  }
+
+  function openChatPanel(){ $('chat-panel').classList.remove('hidden'); renderChatList(); }
+  function closeChatPanel(){ $('chat-panel').classList.add('hidden'); activeChat=null; $('messages').innerHTML=''; $('chat-with').innerText='No chat selected'; }
+
+  function openChatWith(uid){
+    const p = cachedProfiles[uid];
+    if(!(myProfile.following && myProfile.following[uid] && myProfile.followers && myProfile.followers[uid])){ alert('Mutual follow required to chat'); return; }
+    activeChat = p;
+    $('chat-with').innerText = `${p.emoji||'🙂'} ${p.name}`;
+    $('messages').innerHTML = '';
+    const chatId = [currentUser.uid, uid].sort().join('_');
+    const msgsRef = ref(db, `messages/${chatId}`);
+    onChildAdded(msgsRef, snap => displayMessage(snap.key, snap.val()));
+  }
+
+  async function sendMessage(){
+    if(!activeChat){ alert('Select friend'); return; }
+    const text = $('msg-text').value.trim();
+    if(!text) return;
+    const chatId = [currentUser.uid, activeChat.uid].sort().join('_');
+    await push(ref(db, `messages/${chatId}`), { sender: currentUser.uid, type:'text', text, ts: Date.now() });
+    $('msg-text').value = '';
+  }
+
+  async function sendImage(ev){
+    if(!activeChat){ alert('Select friend'); return; }
+    const f = ev.target.files[0]; if(!f) return;
+    const chatId = [currentUser.uid, activeChat.uid].sort().join('_');
+    const pushRef = push(ref(db, `messages/${chatId}`)); const key = pushRef.key;
+    const st = sref(storage, `chat_media/${chatId}/${key}_${f.name}`);
+    try{
+      const res = await uploadBytes(st, f);
+      const url = await getDownloadURL(res.ref);
+      await set(pushRef, { sender: currentUser.uid, type:'image', url, ts: Date.now() });
+    }catch(e){ console.error(e); alert('Upload failed'); }
+    ev.target.value='';
+  }
+
+  function displayMessage(key, m){
+    const wrap = document.createElement('div'); wrap.className = 'msg ' + (m.sender===currentUser.uid ? 'me' : 'them');
+    const meta = document.createElement('div'); meta.className='small muted'; meta.innerText = `${m.sender===currentUser.uid ? 'You' : (cachedProfiles[m.sender]?.name||m.sender)} • ${new Date(m.ts||Date.now()).toLocaleTimeString()}`;
+    wrap.appendChild(meta);
+    if(m.type==='text'){ const t = document.createElement('div'); t.innerText = m.text; wrap.appendChild(t); }
+    else if(m.type==='image'){ const im = document.createElement('img'); im.src = m.url; im.style.maxWidth='180px'; im.style.borderRadius='8px'; wrap.appendChild(im); }
+    $('messages').appendChild(wrap); $('messages').scrollTop = $('messages').scrollHeight;
+  }
+
+  // -------------------------
+  // LISTENERS: profiles / feed realtime
+  // -------------------------
+  function attachPeopleListener(){
+    const allRef = ref(db, 'profiles');
+    onValue(allRef, snap=>{
+      cachedProfiles = {};
+      snap.forEach(ch => cachedProfiles[ch.key] = ch.val());
+      renderPeople(currentTab);
+      renderChatList();
+    });
+  }
+
+  // some helpers already exist above; re-register if necessary
+  function attachProfilesListener(){ attachPeopleListener(); }
+
+  // -------------------------
+  // START: loadFeed / listeners
+  // -------------------------
+  function loadInitialListeners(){
+    // feed, posts already set in loadFeed -> onValue
+    loadFeed();
+  }
+
+  // -------------------------
+  // UTILS: wrapper to use get(child(...))
+  // -------------------------
+  async function getChild(path){
+    return await get(ref(db, path));
+  }
+
+  // -------------------------
+  // START LOG
+  // -------------------------
+  log('App loaded. Replace firebaseConfig and enable Google provider in Firebase Console.');
+
+  </script>
+</body>
+</html>
